@@ -1,48 +1,25 @@
 import yaml
-from data_loader import StockData
-from environment import TradingEnv
-from dsac import DSAC
+from datetime import datetime as dt
+from train import TrainOffPolicy
 
-class StockTrader:
-    def __init__(self, cfg):
-        self.cfg = cfg
+if __name__ == "__main__":
 
-        data_set = StockData(cfg)
-        self.train_dl, self.eval_dl, self.cfg = data_set.get_data_loaders()
-        
-        self.env = TradingEnv(cfg)
-        self.agent = DSAC(cfg)
-
-        self.state = None
-        
-    def train(self):
-        for epoch in range(self.cfg["epochs"]):
-            for step, (date, features, targets) in enumerate(self.train_dl):
-                if step == 0:
-                    self.state = self.env.reset(features)
-                else:
-                    actions = self.agent.act(self.state)
-                    next_state, reward = self.env.step(actions, features, targets)
-                    self.agent.update(self.state, actions, reward, next_state)
-                    self.state = next_state
-
-    def eval(self):
-        for step, (date, features, targets) in enumerate(self.eval_dl):
-            if step == 0:
-                self.state = self.env.reset(features)
-            else:
-                actions = self.agent.act(self.state)
-                next_state, reward = self.env.step(actions, features, targets)
-                self.state = next_state
-
-
-def main():
+    # Load config file
     cfg_file = "configs/base.yaml"
     with open(cfg_file, "r") as f:
         cfg = yaml.safe_load(f)
 
-    trader = StockTrader(cfg)
-    trader.train()
+    # Clear the latest log file
+    with open(cfg["log_dir"] + "latest.log", "w") as f:
+        f.write("")
 
-if __name__ == "__main__":
-    main()
+    try:
+        # Off-Policy Training
+        trader = TrainOffPolicy(cfg)
+        trader.train()
+    except KeyboardInterrupt:
+        # Save the latest log file
+        datetime_str = dt.now().strftime("%y-%m-%d_%H%M%S")
+        with open(cfg["log_dir"] + "latest.log", "r") as rf:
+            with open(cfg["log_dir"] + f"{datetime_str}.log", "w") as wf:
+                wf.write(rf.read())

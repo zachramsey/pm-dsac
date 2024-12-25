@@ -1,0 +1,60 @@
+debug: true
+print_freq: 500
+eval_freq: 1000
+update_steps: 20
+
+data_dir: 'data/stock_data/'
+pickle_dir: 'data/pickles/'
+log_dir: 'data/logs/'
+
+feat_dim: null
+train_len: null
+test_len: null
+
+symbols: null
+asset_dim: 128
+min_volume: 100000
+
+# Training
+epochs: 1000
+train_ratio: 0.2
+window_size: 50
+
+# Optimization
+embedding_lr: 0.0001
+critic_lr: 0.0001
+actor_lr: 0.0001
+temperature_lr: 0.0003
+
+# Environment
+init_cash: 10000
+sell_cost: 0.0025
+purchase_cost: 0.0025
+
+# DSAC
+gamma: 0.99
+tau: 0.005
+tau_b: 0.005
+delay_update: 2
+clipping_range: 3
+grad_bias: 0.1
+std_bias: 0.1
+
+# Experience Replay Buffer
+capacity: 1000000
+
+# Critic (Value) Network
+value_mlp_layers: [256, 256, 256]
+value_activation: 'ReLU' # 'GELU'
+
+# Actor (LSRE-CANN) Network
+min_log_std: -20
+max_log_std: 0.5
+
+depth: 1
+num_latents: 1
+latent_dim: 32
+num_cross_heads: 1
+cross_head_dim: 64
+num_latent_heads: 1
+latent_head_dim: 32
