@@ -184,7 +184,8 @@ class LSRE_CANN(nn.Module):
         Args:
             x (torch.Tensor): Input tensor of shape (asset_dim, window_size, feat_dim)
         Returns:
-            h (torch.Tensor): Contextual tensor of shape (asset_dim, latent_dim)
+            mu (torch.Tensor): Mean tensor of shape (asset_dim, 1)
+            std (torch.Tensor): Standard deviation tensor of shape (asset_dim, 1)
         '''
         z = self.lsre(x)
         h = self.cann(z)

@@ -18,10 +18,18 @@ class StockDataset(Dataset):
         return len(self.dates) - self.window_size + 1
     
     def __getitem__(self, idx):
-        f = self.features[:, idx:idx+self.window_size, :]   # Get the window of asset features
-        f[:,:,:3] /= f[:, -1, 2].reshape(-1, 1, 1)          # Normalize the prices
-        f[:,:, 3] /= f[:, -1, 3].reshape(-1, 1)             # Normalize the volume
-        t = self.targets[:, idx+self.window_size-1]         # Get the target
+        # Get the window of asset features
+        f = self.features[:, idx:idx+self.window_size, :].clone()
+        
+        # Normalize the prices
+        f[:, :, :3] /= f[:, -1, 2].reshape(-1, 1, 1).expand(-1, f.size(1), 3)
+
+        # # Normalize the volume
+        # f[:, :, 3] /= f[:, -1, 3].reshape(-1, 1).expand(-1, f.size(1))
+        
+        # Get the target
+        t = self.targets[:, idx+self.window_size-1]
+
         return f, t
 
 # ==================================================================================================
@@ -113,6 +121,7 @@ class StockDataLoader:
             print(f'{"Extracting Features: ":<25}{(i+1):>5} / {len(self.symbols):<5} | {(i+1)/len(self.symbols)*100:.2f}%', end='\r')
             df = self.data[symbol].copy()
             df.drop(columns=['Open'], inplace=True)
+            df.drop(columns=['Volume'], inplace=True)
             df.dropna(inplace=True)
             self.data[symbol] = df
 
@@ -120,9 +129,12 @@ class StockDataLoader:
         '''Clean the data by removing dates that are not common among all stock symbols'''
         print(f'\nCleaning Up Data...')
         self.dates = set(self.data.get_dates(self.symbols[0]))
-        for symbol in self.symbols[1:]:
+        for symbol in self.symbols:
             self.dates = self.dates.intersection(set(self.data.get_dates(symbol)))
         self.dates = sorted(list(self.dates))
+
+        for symbol in self.symbols:
+            self.data[symbol] = self.data[symbol].loc[self.dates]
 
     def _initialize_tensors(self):
         '''Initialize the tensors for the features and targets'''
@@ -131,8 +143,7 @@ class StockDataLoader:
 
         # Fill prototype tensors with data
         for i, (symbol, df) in enumerate(self.data):
-            df = df.loc[self.dates]
-            self.targets[i] = torch.from_numpy(df['Close'].pct_change().values)
+            self.targets[i] = torch.from_numpy((df['Close']/df['Close'].shift(1)).values)
             self.features[i] = torch.from_numpy(df.values)
 
         # Prepend additional asset representing cash with everything set to 1

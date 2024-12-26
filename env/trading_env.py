@@ -11,6 +11,28 @@ class TradingEnv:
         self.value = self.init_cash         # Initialize the portfolio value
         self.weights = ActionBuffer(cfg)    # Buffer for storing the weights
 
+        self.env_info = {
+            "action": [],
+            "value": [],
+            "reward": [],
+        }
+        
+
+    def reset(self, features):
+        """ Reset the environment to the initial state.
+        Args:
+            features (torch.Tensor): Features for the first day
+        Returns:
+            features (torch.Tensor): Updated features for the first day
+        """
+        self.value = self.init_cash     # Reset the portfolio value
+        self.weights.reset()            # Reset the weights buffer
+
+        action = self.weights.get_all() # Get the action from the buffer
+        features[:, :, -1] = action     # Replace the last column with the weights
+
+        return features
+
 
     # Derived from: github.com/ZhengyaoJiang/PGPortfolio/blob/master/pgportfolio/tools/trade.py
     def _calc_remainder(self, w, w_targ):
@@ -43,20 +65,22 @@ class TradingEnv:
             features (torch.Tensor): Updated features for the next day
             reward (float): Reward for the current day
         """
-        action = action.flatten()                       # Flatten the action tensor
-        # action = torch.softmax(action, dim=-1)          # Apply softmax to the action tensor
-        rel_prices = rel_prices.flatten()               # Flatten the price relative tensor
-
-        w = self.weights.get_last()                     # Get the portfolio weights before the action
+        action = action.flatten()
+        rel_prices = rel_prices.flatten()
+        
+        # Get the portfolio weights before the action
+        w = self.weights.get_last()
 
         # # Calculate the transaction remainder factor
         # mu = self._calc_remainder(w, action)
 
-        # Calculate the portfolio value after the transaction
-        value = self.value * torch.dot(rel_prices, action)
+        # Calculate the new portfolio value
+        value = self.value * torch.dot(w, rel_prices)
 
         # Calculate the reward for the current day
-        reward = torch.log(value / self.value)
+        reward = torch.log(value / self.value) * 100
+
+        # Update the portfolio value
         self.value = value
 
         # Update the weights buffer with the new weights
@@ -65,21 +89,24 @@ class TradingEnv:
         # Replace the last column of the features with the weights
         features[:, :, -1] = self.weights.get_all()
 
+        # Store info about current environment step
+        self.env_info["action"].append(action)
+        self.env_info["value"].append(value)
+        self.env_info["reward"].append(reward)
+
         return reward, features
-
-
-    def reset(self, features):
-        """ Reset the environment to the initial state.
-        Args:
-            features (torch.Tensor): Features for the first day
-        Returns:
-            features (torch.Tensor): Updated features for the first day
-        """
-        self.value = self.init_cash     # Reset the portfolio value
-        self.weights.reset()            # Reset the weights buffer
-
-        action = self.weights.get_all() # Get the action from the buffer
-        features[:, :, -1] = action     # Replace the last column with the weights
-
-        return features
     
+        # pv_after_commission = calculate_pv_after_commission(omega, self._last_omega, self._commission_rate)
+        # delta_value = pv_after_commission * np.dot(omega, future_price)
+        # value = self.value * portfolio_change
+        # weights = pv_after_commission * omega * future_price / portfolio_change
+
+    
+    def log_info(self, path):
+        """ Save the environment info to a file.
+        Args:
+            path (str): Path to the file
+        """
+        with open(path, "a") as f:
+            #{str(self.env_info["action"][-1]):<20}
+            f.write(f"{str(self.env_info["value"][-1]):<20}{str(self.env_info["reward"][-1]):<20}\n")

@@ -41,23 +41,20 @@ class DSAC:
         for p in self.actor_target.parameters(): p.requires_grad = False
 
         # Parameterized policy entropy temperature (Alpha)
-        self.log_temperature = nn.Parameter(torch.tensor(1, dtype=torch.float32))
+        self.log_alpha = nn.Parameter(torch.tensor(1, dtype=torch.float32))
 
         # Optimizers
         self.critic1_opt = Adam(self.critic1.parameters(), lr=cfg["critic_lr"])
         self.critic2_opt = Adam(self.critic2.parameters(), lr=cfg["critic_lr"])
         self.actor_opt = Adam(self.actor.parameters(), lr=cfg["actor_lr"])
-        self.temperature_opt = Adam([self.log_temperature], lr=cfg["temperature_lr"])
-
-        # Experience replay buffer (contains {})
-        # self.buffer = Buffer(**cfg["buffer"])
+        self.alpha_opt = Adam([self.log_alpha], lr=cfg["temperature_lr"])
 
         # Rolling values
         self.q1_mean_std = -1.0
         self.q2_mean_std = -1.0
 
         # Collect training information
-        self.training_info = {
+        self.update_info = {
             "step": [],
             "q1": [],
             "q2": [],
@@ -67,8 +64,6 @@ class DSAC:
             "min_q2_std": [],
             "actor_loss": [],
             "critic_loss": [],
-            "policy_mean": [],
-            "policy_std": [],
             "entropy": [],
             "alpha": [],
             "q1_mean_std": [],
@@ -79,27 +74,33 @@ class DSAC:
     def _actor_objective(self, s, act_new, log_prob_new):
         q1, _ = self.critic1(s, act_new)
         q2, _ = self.critic2(s, act_new)
-        actor_loss = torch.mean(torch.exp(self.log_temperature) * log_prob_new - torch.min(q1, q2))
+        actor_loss = torch.mean(torch.exp(self.log_alpha) * log_prob_new - torch.min(q1, q2))
         entropy = -torch.mean(log_prob_new.detach())
         return actor_loss, entropy
     
 
     def _temperature_objective(self, log_prob_new):
-        return -self.log_temperature * torch.mean(log_prob_new.detach() + self.target_entropy)
+        return -self.log_alpha * torch.mean(log_prob_new.detach() + self.target_entropy)
     
 
     def _evaluate_critic(self, s, a, r, s_next):
         # Get action for next state
         logits_next_mean, logits_next_std = self.actor_target(s_next)
         a_next, log_prob_a_next = TanhGaussDistribution(logits_next_mean, logits_next_std).rsample()
+        a_next = torch.softmax(a_next, dim=0)
+        # print("\na_next\n:", a_next.shape, a_next[:10])
+        # print("\nlog_prob_a_next\n:", log_prob_a_next.shape, log_prob_a_next[:10])
 
         # Calculate Q-values for current state
         q1, q1_std = self.critic1(s, a)
+        # print("\nq1: ", q1)
+        # print("q1_std: ", q1_std)
         q2, q2_std = self.critic2(s, a)
 
         # Calculate clipping bounds and gradient scalars for Q-values
         if self.q1_mean_std == -1.0: self.q1_mean_std = torch.mean(q1_std.detach())
         else: self.q1_mean_std = self.tau_b * torch.mean(q1_std.detach()) + (1 - self.tau_b) * self.q1_mean_std
+        # print("\nq1_mean_std: ", self.q1_mean_std)
         
         if self.q2_mean_std == -1.0: self.q2_mean_std = torch.mean(q2_std.detach())
         else: self.q2_mean_std = self.tau_b * torch.mean(q2_std.detach()) + (1 - self.tau_b) * self.q2_mean_std
@@ -109,6 +110,10 @@ class DSAC:
         normal = Normal(torch.zeros_like(q1_next), torch.ones_like(q1_next_std))
         z = torch.clamp(normal.sample(), -self.zeta, self.zeta)
         q1_next_sample = q1_next + torch.mul(z, q1_next_std)
+        # print("\nq1_next: ", q1_next)
+        # print("q1_next_std: ", q1_next_std)
+        # print("q1_z: ", z)
+        # print("q1_next_sample: ", q1_next_sample)
 
         q2_next, q2_next_std = self.critic2_target(s_next, a_next)
         normal = Normal(torch.zeros_like(q2_next), torch.ones_like(q2_next_std))
@@ -118,22 +123,31 @@ class DSAC:
         # Calculate target Q-value
         q_next = torch.min(q1_next, q2_next)
         q_next_sample = torch.where(q1_next < q2_next, q1_next_sample, q2_next_sample)
+        # print("\nq_next: ", q_next)
+        # print("q_next_sample: ", q_next_sample)
 
-        temperature = torch.exp(self.log_temperature)
+        temperature = torch.exp(self.log_alpha)
         q_target = (r + self.gamma * (q_next - temperature * log_prob_a_next)).detach()
         q_target_sample = (r + self.gamma * (q_next_sample - temperature * log_prob_a_next)).detach()
+        # print("\nq_target: ", q_target)
+        # print("q_target_sample: ", q_target_sample)
 
         # Calculate Critic 1 Loss
         # Mean-related gradient
         q1_std_detach = torch.clamp(q1_std, min=0.0).detach()
         grad_mean = -((q_target - q1).detach() / (torch.pow(q1_std_detach, 2) + self.std_bias)) * q1
+        # print("\nq1_std_detach: ", q1_std_detach)
+        # print("q1_grad_mean: ", grad_mean)
 
         # Std-related gradient
         q1_target_bound = (q1 + torch.clamp(q_target_sample - q1, -self.zeta*q1_std, self.zeta*q1_std)).detach()
         grad_std = -((torch.pow(q1.detach() - q1_target_bound, 2) - torch.pow(q1_std_detach, 2)) 
                     /(torch.pow(q1_std_detach, 3) + self.std_bias)) * q1_std
+        # print("\nq1_target_bound: ", q1_target_bound)
+        # print("\nq1_grad_std: ", grad_std)
 
         q1_loss = (torch.pow(self.q1_mean_std, 2) + self.grad_bias) * torch.mean(grad_mean + grad_std)
+        # print("\nq1_loss: ", q1_loss)
 
         # Calculate Critic 2 Loss
         # Mean-related gradient
@@ -149,6 +163,7 @@ class DSAC:
 
         # Total Critic Loss
         critic_loss = q1_loss + q2_loss
+        # print("\ncritic_loss: ", critic_loss)
 
         return (critic_loss, 
                 torch.mean(q1.detach()), torch.mean(q2.detach()), 
@@ -159,17 +174,14 @@ class DSAC:
     def act(self, s):
         logits_mean, logits_std = self.actor(s)
         act, _ = TanhGaussDistribution(logits_mean, logits_std).rsample()
-        return act.detach()
+        return torch.softmax(act, dim=0).detach()
 
 
     def update(self, iteration, s, a, r, s_next):
         # Get action for current state
         logits_mean, logits_std = self.actor(s)
-        policy_mean = torch.mean(torch.tanh(logits_mean)).item()
-        policy_std = torch.mean(logits_std).item()
-        act_new, log_prob_new = TanhGaussDistribution(policy_mean, policy_std).rsample()
-        self.training_info["act_new"].append(act_new)
-        self.training_info["log_prob_new"].append(log_prob_new)
+        act_new, log_prob_new = TanhGaussDistribution(logits_mean, logits_std).rsample()
+        act_new = torch.softmax(act_new, dim=0)
 
         # Update Critic
         self.critic1_opt.zero_grad()#set_to_none=True)
@@ -191,26 +203,9 @@ class DSAC:
         for p in self.critic2.parameters(): p.requires_grad = True
 
         # Update temperature
-        self.temperature_opt.zero_grad()
+        self.alpha_opt.zero_grad()
         temperature_loss = self._temperature_objective(log_prob_new)
         temperature_loss.backward()
-
-        # Collect training information
-        self.training_info["step"].append(iteration)
-        self.training_info["q1"].append(q1.item())
-        self.training_info["q2"].append(q2.item())
-        self.training_info["q1_std"].append(q1_std.item())
-        self.training_info["q2_std"].append(q2_std.item())
-        self.training_info["min_q1_std"].append(q1_min_std.item())
-        self.training_info["min_q2_std"].append(q2_min_std.item())
-        self.training_info["actor_loss"].append(actor_loss.item())
-        self.training_info["critic_loss"].append(critic_loss.item())
-        self.training_info["policy_mean"].append(policy_mean)
-        self.training_info["policy_std"].append(policy_std)
-        self.training_info["entropy"].append(entropy.item())
-        self.training_info["alpha"].append(torch.exp(self.log_temperature).item())
-        self.training_info["q1_mean_std"].append(self.q1_mean_std)
-        self.training_info["q2_mean_std"].append(self.q2_mean_std)
 
         # Optimize critic networks
         self.critic1_opt.step()
@@ -219,7 +214,7 @@ class DSAC:
         # Delayed update
         if iteration % self.delay_update == 0:
             self.actor_opt.step()       # Optimize actor network
-            self.temperature_opt.step() # Optimize temperature network
+            self.alpha_opt.step() # Optimize temperature network
 
             # Perform soft update on target networks
             with torch.no_grad():
@@ -237,8 +232,23 @@ class DSAC:
                     p_targ.data.mul_(polyak)
                     p_targ.data.add_((1 - polyak) * p.data)
 
+        # Collect training information
+        self.update_info["step"].append(iteration)
+        self.update_info["q1"].append(q1.item())
+        self.update_info["q2"].append(q2.item())
+        self.update_info["q1_std"].append(q1_std.item())
+        self.update_info["q2_std"].append(q2_std.item())
+        self.update_info["min_q1_std"].append(q1_min_std.item())
+        self.update_info["min_q2_std"].append(q2_min_std.item())
+        self.update_info["actor_loss"].append(actor_loss.item())
+        self.update_info["critic_loss"].append(critic_loss.item())
+        self.update_info["entropy"].append(entropy.item())
+        self.update_info["alpha"].append(torch.exp(self.log_alpha).item())
+        self.update_info["q1_mean_std"].append(self.q1_mean_std.item())
+        self.update_info["q2_mean_std"].append(self.q2_mean_std.item())
 
-    def log_training_info(self, log_file):
+
+    def log_info(self, log_file):
         # Check that logs directory exists
         log_dir = os.path.dirname(log_file)
         if not os.path.exists(log_dir):
@@ -247,7 +257,7 @@ class DSAC:
         # Write training information to log file
         with open(log_file, "a") as f:
             f.write("="*50 + "\n")
-            for key, value in self.training_info.items():
+            for key, value in self.update_info.items():
                 if key == "step":
                     f.write(f"Training Step: {value[-1]}\n")
                     f.write("-"*50 + "\n")

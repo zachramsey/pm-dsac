@@ -42,19 +42,22 @@ class TrainOffPolicy:
 
                     self.state = next_state
 
-                    if step % self.cfg["print_freq"] == 0:
-                        print(f"Epoch: {epoch} | Step: {step} | Date: {self.train_dates[step].date()} | Reward: {reward:.6f}")
+                    if step % self.cfg["print_freq"] == 0 or step == len(self.train_dl) - 1:
+                        print(f"Epoch: {epoch} | Step: {step} | Date: {self.train_dates[step].date()} | Reward: {reward.item():.6f}", end="\r")
+                print()
+
+                    # self.env.log_info(self.cfg["log_dir"] + "latest.log")
 
             # Agent Update
             for step in range(self.cfg["update_steps"]):
                 s, a, r, s_ = self.buffer.sample()
                 self.agent.update(epoch, s, a, r, s_)
-                self.agent.log_training_info(self.cfg["log_dir"] + "latest.log")
+            self.agent.log_info(self.cfg["log_dir"] + "latest.log")
 
             # Evaluation
-            print(f"\nEpoch {epoch} Evaluation")
             with torch.no_grad():
                 if epoch % self.cfg["eval_freq"] == 0:
+                    print(f"\nEpoch {epoch} Evaluation")
                     for step, (features, targets) in enumerate(self.eval_dl):
                         features = features.squeeze(0)
 
@@ -63,7 +66,8 @@ class TrainOffPolicy:
                             continue
 
                         action = self.agent.act(self.state)
-                        next_state, reward = self.env.step(action, features, targets)
+                        reward, next_state = self.env.step(action, features, targets)
 
-                        if step % self.cfg["print_freq"] == 0:
-                            print(f"Epoch: {epoch} | Step: {step} | Date: {self.eval_dates[step].date()} | Reward: {reward:.6f}")
+                        if step % self.cfg["print_freq"] == 0 or step == len(self.eval_dl) - 1:
+                            print(f"Epoch: {epoch} | Step: {step} | Date: {self.eval_dates[step].date()} | Reward: {reward.item():.6f}", end="\r")
+                    print()

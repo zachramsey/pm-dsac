@@ -26,9 +26,9 @@ class ReplayBuffer:
         """
         epoch = e % self.num_epochs
         step = i - self.step_offset
-        self.buffer["i"][epoch, step] = torch.tensor(i)
-        self.buffer["a"][epoch, step] = a.reshape(self.asset_dim)
-        self.buffer["r"][epoch, step] = r
+        self.buffer["i"][epoch, step] = torch.tensor(i)             # (1,)
+        self.buffer["a"][epoch, step] = a.reshape(self.asset_dim)   # (asset_dim,)
+        self.buffer["r"][epoch, step] = r.reshape(1)                # (1,)
         
     def sample(self):
         """ Sample a batch of trajectories from the replay buffer
@@ -39,20 +39,22 @@ class ReplayBuffer:
             s_ (torch.Tensor): Next state tensor of shape (asset_dim, window_size, feat_dim)
         """
         epoch = torch.randint(0, self.num_epochs, (1,))
-        start = torch.randint(0, self.epoch_len - self.cfg["window_size"] - 1, (1,))
-        end = start + self.cfg["window_size"]
+        start = torch.randint(0, self.epoch_len - self.window_size - 1, (1,))
+        end = start + self.window_size
         
         i = self.buffer["i"][epoch, end-1].long()   # Step number
 
-        s = self.data.dataset[i]                    # (asset_dim, window_size, feat_dim)
-        a = self.buffer["a"][epoch, start:end+1]    # (window_size, asset_dim)
-        r = self.buffer["r"][epoch, start:end]      # (window_size,)
-        s_ = self.data.dataset[i+1]                 # (asset_dim, window_size, feat_dim)
+        s = self.data.dataset[i][0]                 # s:  (asset_dim, window_size, feat_dim)
+        a = self.buffer["a"][epoch, start:end+1]    # a:  (1, window_size+1, asset_dim)
+        r = self.buffer["r"][epoch, end-1]          # r:  (1, 1)
+        s_ = self.data.dataset[i+1][0]              # s_: (asset_dim, window_size, feat_dim)
 
-        a = a.reshape(self.asset_dim, -1)           # (asset_dim, window_size)
-        r = r.unsqueeze(0)                          # (1, window_size)
+        a = a.transpose(0, 2)                       # a: (asset_dim, window_size+1, 1)
+        r = r.squeeze(1)                            # r: (1,)
 
-        s[..., -1] = a[:, :-1]                      # Replace the last column with the action
-        s_[..., -1] = a[:, 1:]                      # Replace the last column with the action
+        s[..., -1] = a.squeeze(-1)[:, :-1]          # Replace the last column with the action
+        s_[..., -1] = a.squeeze(-1)[:, 1:]          # Replace the last column with the action
+
+        a = a[:, -1]                                # (asset_dim, 1)
 
         return s, a, r, s_

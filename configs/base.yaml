@@ -1,7 +1,7 @@
 debug: true
 print_freq: 500
-eval_freq: 1000
-update_steps: 20
+eval_freq: 10
+update_steps: 200
 
 data_dir: 'data/stock_data/'
 pickle_dir: 'data/pickles/'
@@ -17,7 +17,7 @@ min_volume: 100000
 
 # Training
 epochs: 1000
-train_ratio: 0.2
+train_ratio: 0.8
 window_size: 50
 
 # Optimization
