@@ -1,8 +1,13 @@
+import sys
+import numpy as np
 import torch
+
 from preprocess.data_loader import StockDataLoader
-from buffer import ReplayBuffer
 from env.trading_env import TradingEnv
 from agent.dsac import DSAC
+
+from utils.buffer import ReplayBuffer
+from utils.visualize import plot_update_info, animate_portfolio
 
 class TrainOffPolicy:
     def __init__(self, cfg):
@@ -19,55 +24,81 @@ class TrainOffPolicy:
         self.env = TradingEnv(self.cfg)
         self.agent = DSAC(self.cfg)
 
-        self.state = None
-        
+        self.s = None
+        self.weights = np.zeros((self.cfg["train_len"], self.cfg["asset_dim"]))
+        self.values = np.zeros(self.cfg["train_len"])
+
     def train(self):
         for epoch in range(self.cfg["epochs"]):
+            print(f"\nEpoch {epoch}:")
+            self._interact(epoch)
+            self._update(epoch)
+            self._evaluate(epoch)
 
-            # Environment Interaction
-            print(f"\nEpoch {epoch} Training")
-            with torch.no_grad():
-                for step, (features, targets) in enumerate(self.train_dl):
-                    features = features.squeeze(0)
+            if epoch % self.cfg["plot_freq"] == 0 and epoch > 0:
+                plot_update_info(epoch, self.agent.update_info, self.cfg)
+                #animate_portfolio(epoch, self.weights, self.values, self.train_dates, self.cfg)
+
+
+    def _interact(self, epoch):
+        with torch.no_grad():
+            print()
+            for step, (feat, targ) in enumerate(self.train_dl):
+                feat = feat.squeeze(0)
+
+                if step == 0:
+                    self.agent.reset()
+                    self.s = self.env.reset(feat)
+                    continue
+
+                a, z = self.agent.act(self.s)
+                r, s_ = self.env.step(a, feat, targ)
+
+                if step >= self.cfg["window_size"] - 1:
+                    self.buffer.add(epoch, step, z, a, r)
+
+                self.s = s_
+                self.weights[step] = self.env.weights.get_last().flatten().cpu().numpy()
+                self.values[step] = self.env.value
+
+                if step % self.cfg["interact_print_freq"] == 0 or step == len(self.train_dl) - 1:
+                    sys.stdout.write("\033[F\033[K")
+                    print(f"Interact | Step: {step} | Date: {self.train_dates[step].date()} | Value: {self.env.value:.2f}")
+
+
+    def _update(self, epoch):
+        print()
+        for step in range(self.cfg["update_steps"]):
+            s, z, a, r, s_ = self.buffer.sample()
+            self.agent.update(epoch, s, z, a, r, s_)
+            
+            if step % self.cfg["update_print_freq"] == 0 or step == self.cfg["update_steps"] - 1:
+                sys.stdout.write("\033[F\033[K")
+                print(f"  Update | Step: {step+1} | Actor Loss: {sum(self.agent.update_info["actor_loss"][-step:]):.6f} | Critic Loss: {sum(self.agent.update_info["critic_loss"][-step:]):.6f}")
+        self.agent.log_info(self.cfg["log_dir"] + "latest.log")
+
+
+    def _evaluate(self, epoch):
+        with torch.no_grad():
+            self.agent.embedding.eval()
+            if epoch % self.cfg["eval_freq"] == 0:
+                print()
+                total_reward = 0
+                for step, (feat, targ) in enumerate(self.eval_dl):
+                    feat = feat.squeeze(0)
 
                     if step == 0:
-                        self.state = self.env.reset(features)
+                        self.agent.reset()
+                        self.s = self.env.reset(feat)
                         continue
 
-                    action = self.agent.act(self.state)
-                    reward, next_state = self.env.step(action, features, targets)
+                    a, _ = self.agent.act(self.s, is_deterministic=True)
+                    r, s_ = self.env.step(a, feat, targ)
 
-                    if step >= self.cfg["window_size"] - 1:
-                        self.buffer.add(epoch, step, action, reward)
+                    total_reward += r
+                    self.s = s_
 
-                    self.state = next_state
-
-                    if step % self.cfg["print_freq"] == 0 or step == len(self.train_dl) - 1:
-                        print(f"Epoch: {epoch} | Step: {step} | Date: {self.train_dates[step].date()} | Reward: {reward.item():.6f}", end="\r")
-                print()
-
-                    # self.env.log_info(self.cfg["log_dir"] + "latest.log")
-
-            # Agent Update
-            for step in range(self.cfg["update_steps"]):
-                s, a, r, s_ = self.buffer.sample()
-                self.agent.update(epoch, s, a, r, s_)
-            self.agent.log_info(self.cfg["log_dir"] + "latest.log")
-
-            # Evaluation
-            with torch.no_grad():
-                if epoch % self.cfg["eval_freq"] == 0:
-                    print(f"\nEpoch {epoch} Evaluation")
-                    for step, (features, targets) in enumerate(self.eval_dl):
-                        features = features.squeeze(0)
-
-                        if step == 0:
-                            self.state = self.env.reset(features)
-                            continue
-
-                        action = self.agent.act(self.state)
-                        reward, next_state = self.env.step(action, features, targets)
-
-                        if step % self.cfg["print_freq"] == 0 or step == len(self.eval_dl) - 1:
-                            print(f"Epoch: {epoch} | Step: {step} | Date: {self.eval_dates[step].date()} | Reward: {reward.item():.6f}", end="\r")
-                    print()
+                    if step % self.cfg["eval_print_freq"] == 0 or step == len(self.eval_dl) - 1:
+                        sys.stdout.write("\033[F\033[K")
+                        print(f"Evaluate | Step: {step} | Date: {self.eval_dates[step].date()} | Value: {self.env.value:.2f} | Reward: {total_reward:.10f}")
+            self.agent.embedding.train()

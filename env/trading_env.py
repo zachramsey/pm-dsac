@@ -28,6 +28,12 @@ class TradingEnv:
         self.value = self.init_cash     # Reset the portfolio value
         self.weights.reset()            # Reset the weights buffer
 
+        self.env_info = {
+            "action": [],
+            "value": [],
+            "reward": [],
+        }
+
         action = self.weights.get_all() # Get the action from the buffer
         features[:, :, -1] = action     # Replace the last column with the weights
 

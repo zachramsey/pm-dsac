@@ -1,11 +1,17 @@
 debug: true
-print_freq: 500
-eval_freq: 10
-update_steps: 200
+
+interact_print_freq: 200
+update_print_freq: 25
+eval_print_freq: 200
+
+eval_freq: 1
+update_steps: 4000
+plot_freq: 1
 
 data_dir: 'data/stock_data/'
 pickle_dir: 'data/pickles/'
 log_dir: 'data/logs/'
+plot_dir: 'data/plots/'
 
 feat_dim: null
 train_len: null
@@ -41,11 +47,7 @@ grad_bias: 0.1
 std_bias: 0.1
 
 # Experience Replay Buffer
-capacity: 1000000
-
-# Critic (Value) Network
-value_mlp_layers: [256, 256, 256]
-value_activation: 'ReLU' # 'GELU'
+capacity: 180000
 
 # Actor (LSRE-CANN) Network
 min_log_std: -20

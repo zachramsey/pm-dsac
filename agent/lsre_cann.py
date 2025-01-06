@@ -97,6 +97,7 @@ class LSRE(nn.Module):
         depth = cfg['depth']                        # Number of self attention layers
         f = cfg['feat_dim']                         # Number of features
 
+        asset_dim = cfg['asset_dim']                # Number of assets
         num_latents = cfg['num_latents']            # Number of latents
         latent_dim = cfg['latent_dim']              # Dimension of latents
 
@@ -106,62 +107,69 @@ class LSRE(nn.Module):
         num_latent_heads = cfg['num_latent_heads']  # Number of self attention heads
         latent_head_dim = cfg['latent_head_dim']    # Dimension of self attention heads
 
-        self.z = nn.Parameter(torch.randn(num_latents, latent_dim))
+        self.z = nn.Buffer(torch.randn(asset_dim, num_latents, latent_dim))
         self.cross_attn = AttentionBlock(num_cross_heads, cross_head_dim, latent_dim, f)
         self.self_attns = nn.ModuleList([AttentionBlock(num_latent_heads, latent_head_dim, latent_dim) for _ in range(depth)])
+
 
     def forward(self, x):
         ''' ### Forward pass of LSRE
         Args:
             x (torch.Tensor): Input tensor of shape (asset_dim, window_size, feat_dim)
         Returns:
-            z (torch.Tensor): Latent tensor of shape (asset_dim, latent_dim)
+            z (torch.Tensor): Latent tensor of shape (asset_dim, num_latents, latent_dim)
         '''
-        z = repeat(self.z, 'n d -> b n d', b=x.shape[0])
-        x = self.cross_attn(z, x)
+        x = self.cross_attn(self.z, x)
         for self_attn in self.self_attns:
-            z = self_attn(z)
-        return z.squeeze(1)
+            self.z = self_attn(self.z)
+        return self.z
 
 
 class CANN(nn.Module):
     def __init__(self, cfg):
         super().__init__()
-        latent_dim = cfg['latent_dim']
-        self.scale = latent_dim ** -0.5
+        self.asset_dim = cfg['asset_dim']
+        self.num_latents = cfg['num_latents']
+        self.latent_dim = cfg['latent_dim']
+        self.flat_dim = self.num_latents * self.latent_dim
+        self.scale = self.latent_dim ** -0.5
         
-        self.q_linear = nn.Linear(latent_dim, latent_dim)
-        self.k_linear = nn.Linear(latent_dim, latent_dim)
-        self.v_linear = nn.Linear(latent_dim, latent_dim)
+        self.q_linear = nn.Linear(self.flat_dim, self.flat_dim)
+        self.k_linear = nn.Linear(self.flat_dim, self.flat_dim)
+        self.v_linear = nn.Linear(self.flat_dim, self.flat_dim)
 
     def forward(self, z):
         ''' ### Forward pass of CANN
         Args:
-            z (torch.Tensor): Latent tensor of shape (asset_dim, latent_dim)
+            z (torch.Tensor): Latent tensor of shape (asset_dim, num_latents, latent_dim)
         Returns:
-            h (torch.Tensor): Contextual tensor of shape (asset_dim, latent_dim)
+            h (torch.Tensor): Hidden state of shape (asset_dim, num_latents, latent_dim)
         '''
+        z = z.reshape(self.asset_dim, self.flat_dim)
         q = self.q_linear(z)
         k = self.k_linear(z)
         v = self.v_linear(z)
 
-        # (asset_dim, latent_dim) x (latent_dim, asset_dim) -> (asset_dim, asset_dim)
+        # (asset_dim, flat_dim) x (flat_dim, asset_dim) -> (asset_dim, asset_dim)
         scores = torch.matmul(q, k.transpose(0, 1)) * self.scale
 
         # (asset_dim, asset_dim) -> (asset_dim, asset_dim)
         attn = torch.softmax(scores, dim=-1)
         
-        # (asset_dim, latent_dim) -> (1, asset_dim, latent_dim)
+        # (asset_dim, flat_dim) -> (1, asset_dim, flat_dim)
         v = v.unsqueeze(0)
 
         # (asset_dim, asset_dim) -> (asset_dim, asset_dim, 1)
         attn = attn.unsqueeze(-1)
 
-        # (asset_dim, asset_dim, 1) x (1, asset_dim, latent_dim) -> (asset_dim, asset_dim, latent_dim)
+        # (asset_dim, asset_dim, 1) x (1, asset_dim, flat_dim) -> (asset_dim, asset_dim, flat_dim)
         h = attn * v
 
-        # (asset_dim, asset_dim, latent_dim) -> (asset_dim, latent_dim)
+        # (asset_dim, asset_dim, flat_dim) -> (asset_dim, flat_dim)
         h = torch.sum(h, dim=1)
+
+        # (asset_dim, flat_dim) -> (asset_dim, num_latents, latent_dim)
+        h = h.reshape(self.asset_dim, -1, self.latent_dim)
 
         return h
 
@@ -169,7 +177,6 @@ class CANN(nn.Module):
 class LSRE_CANN(nn.Module):
     def __init__(self, cfg):
         super().__init__()
-        latent_dim = cfg['latent_dim']              # Dimension of latents
         self.min_log_std = cfg["min_log_std"]
         self.max_log_std = cfg["max_log_std"]
 
@@ -177,19 +184,23 @@ class LSRE_CANN(nn.Module):
 
         self.lsre = LSRE(cfg)
         self.cann = CANN(cfg)
-        self.out = nn.Linear(latent_dim, 2)
 
-    def forward(self, x):
+    def forward(self, x, z=None):
         ''' ### Forward pass of LSRE_CANN
         Args:
             x (torch.Tensor): Input tensor of shape (asset_dim, window_size, feat_dim)
+            z (torch.Tensor): Latent tensor of shape (asset_dim, num_latents, latent_dim)
+            reset (bool): Whether to reset the latent tensor
         Returns:
-            mu (torch.Tensor): Mean tensor of shape (asset_dim, 1)
-            std (torch.Tensor): Standard deviation tensor of shape (asset_dim, 1)
+            h (torch.Tensor): Hidden state of shape (asset_dim, latent_dim)
         '''
+        if z is not None: self.lsre.z = z   # Set the latent tensor if provided
+        z_prior = self.lsre.z               # Save the latent tensor
         z = self.lsre(x)
         h = self.cann(z)
-        logits = self.out(h)
-        mu, log_std = torch.chunk(logits, chunks=2, dim=-1) 
-        std = torch.exp(torch.clamp(log_std, self.min_log_std, self.max_log_std))
-        return mu, std
+        return h, z_prior
+    
+    def reset_latent(self):
+        ''' ### Reset the latent tensor. Used at the start of a rollout. '''
+        self.lsre.z = torch.randn_like(self.lsre.z)
+        
