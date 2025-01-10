@@ -1,6 +1,6 @@
 debug: true
 
-interact_print_freq: 200
+interact_print_freq: 1
 update_print_freq: 25
 eval_print_freq: 200
 
@@ -24,6 +24,7 @@ min_volume: 100000
 # Training
 epochs: 1000
 train_ratio: 0.8
+batch_size: 256
 window_size: 50
 
 # Optimization
@@ -54,9 +55,10 @@ min_log_std: -20
 max_log_std: 0.5
 
 depth: 1
-num_latents: 1
-latent_dim: 32
-num_cross_heads: 1
+num_latents: 12
+latent_dim: 128
+num_cross_heads: 4
 cross_head_dim: 64
-num_latent_heads: 1
-latent_head_dim: 32
+num_latent_heads: 4
+latent_head_dim: 64
+dropout: 0.1

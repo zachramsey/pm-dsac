@@ -47,30 +47,29 @@ class TrainOffPolicy:
                 feat = feat.squeeze(0)
 
                 if step == 0:
-                    self.agent.reset()
                     self.s = self.env.reset(feat)
                     continue
 
-                a, z = self.agent.act(self.s)
+                a = self.agent.act(self.s)
                 r, s_ = self.env.step(a, feat, targ)
 
                 if step >= self.cfg["window_size"] - 1:
-                    self.buffer.add(epoch, step, z, a, r)
+                    self.buffer.add(epoch, step, a, r)
 
                 self.s = s_
                 self.weights[step] = self.env.weights.get_last().flatten().cpu().numpy()
                 self.values[step] = self.env.value
 
                 if step % self.cfg["interact_print_freq"] == 0 or step == len(self.train_dl) - 1:
-                    sys.stdout.write("\033[F\033[K")
+                    # sys.stdout.write("\033[F\033[K")
                     print(f"Interact | Step: {step} | Date: {self.train_dates[step].date()} | Value: {self.env.value:.2f}")
 
 
     def _update(self, epoch):
         print()
         for step in range(self.cfg["update_steps"]):
-            s, z, a, r, s_ = self.buffer.sample()
-            self.agent.update(epoch, s, z, a, r, s_)
+            s, a, r, s_ = self.buffer.sample()
+            self.agent.update(epoch, s, a, r, s_)
             
             if step % self.cfg["update_print_freq"] == 0 or step == self.cfg["update_steps"] - 1:
                 sys.stdout.write("\033[F\033[K")
@@ -88,11 +87,10 @@ class TrainOffPolicy:
                     feat = feat.squeeze(0)
 
                     if step == 0:
-                        self.agent.reset()
                         self.s = self.env.reset(feat)
                         continue
 
-                    a, _ = self.agent.act(self.s, is_deterministic=True)
+                    a = self.agent.act(self.s, is_deterministic=True)
                     r, s_ = self.env.step(a, feat, targ)
 
                     total_reward += r

@@ -79,17 +79,13 @@ class DSAC:
         }
 
 
-    def reset(self):
-        self.embedding.reset_latent()
-
-
     def act(self, s, is_deterministic=False):
-        h, z = self.embedding(s)
+        h = self.embedding(s)
         act, std = self.actor(h)
         act_dist = TanhGaussDistribution(act, std)
         act = act_dist.mode() if is_deterministic else act_dist.sample()[0]
         act = torch.softmax(act, dim=0)
-        return act.detach(), z.detach()
+        return act.detach()
     
 
     def _critic_objective(self, s, a, r, s_next):
@@ -162,16 +158,18 @@ class DSAC:
         return -self.log_alpha * torch.mean(log_prob_new.detach() + self.target_entropy)
 
 
-    def update(self, iteration, s, z, a, r, s_next):
+    def update(self, iteration, s, a, r, s_next):
         # Embed state into latent space
         self.embedding_opt.zero_grad()
-        h, _ = self.embedding(s, z)
-        h_next, _ = self.embedding(s_next)
+        h = self.embedding(s)
+        h_next = self.embedding(s_next)
         
         # Get action for current state
         logits_mean, logits_std = self.actor(h)
-        act_new, log_prob_new = TanhGaussDistribution(logits_mean, logits_std).rsample()
-        act_new = torch.softmax(act_new, dim=0)
+        policy_mean = torch.mean(torch.tanh(logits_mean)).item()
+        policy_std = torch.mean(logits_std).item()
+        act_new, log_prob_new = TanhGaussDistribution(policy_mean, policy_std).rsample()
+        act_new = torch.softmax(act_new, dim=1)
 
         # Update Critic
         self.critic1_opt.zero_grad()#set_to_none=True)

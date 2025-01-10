@@ -58,6 +58,13 @@ class StockData:
     def get_features(self, symbol):
         '''Return the features included in a symbol's data'''
         return self.data[symbol].columns
+    
+    def shape(self):
+        '''Return the shape of the data (number of symbols, number of dates, number of features)'''
+        num_symbols = len(self.data)
+        num_dates = len(self.data[list(self.data.keys())[0]])
+        num_features = len(self.data[list(self.data.keys())[0]].columns)
+        return num_symbols, num_dates, num_features
 
     def _separate_symbols(self):
         '''Separate symbols into existing and new based on data directory'''
@@ -86,7 +93,7 @@ class StockData:
                 df.to_csv(file_path)    # Save to csv
                 self.data[symbol] = df   # Add to the dictionary
                 self.i += 1
-                print(f'{"Loading Historical Data: ":<25}{self.i:>5} / {len(new_symbols):<5} | {self.i/len(new_symbols)*100:.2f}%', end='\r')
+                print(f'{"Fetching Historical Data: ":<25}{self.i:>5} / {len(new_symbols):<5} | {self.i/len(new_symbols)*100:.2f}%', end='\r')
             else:
                 failed_symbols.append(symbol)  # Track the failed symbol
 
