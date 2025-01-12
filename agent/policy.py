@@ -11,7 +11,7 @@ class Actor(nn.Module):
         self.min_log_std = cfg["min_log_std"]
         self.max_log_std = cfg["max_log_std"]
 
-        self.input = nn.Sequential(nn.Linear(cfg["num_latents"]*cfg["latent_dim"], 256), nn.GELU())
+        self.input = nn.Sequential(nn.Linear(cfg["latent_dim"], 256), nn.GELU())
         self.hidden1 = nn.Sequential(nn.Linear(256, 256), nn.GELU())
         self.hidden2 = nn.Sequential(nn.Linear(256, 256), nn.GELU())
         self.hidden3 = nn.Sequential(nn.Linear(256, 256), nn.GELU())
@@ -20,7 +20,7 @@ class Actor(nn.Module):
     def forward(self, s):
         ''' ### Forward pass of Actor
         Args:
-            s (torch.Tensor): State tensor of shape (batch_dim, asset_dim, num_latents*latent_dim)
+            s (torch.Tensor): State tensor of shape (batch_dim, asset_dim, latent_dim)
         Returns:
             mu (torch.Tensor): Mean tensor of shape (batch_dim, asset_dim, 1)
             std (torch.Tensor): Standard deviation tensor of shape (batch_dim, asset_dim, 1)

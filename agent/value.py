@@ -9,7 +9,7 @@ class Critic(nn.Module):
     def __init__(self, cfg):
         super(Critic, self).__init__()
         
-        self.input = nn.Sequential(nn.Linear(cfg["num_latents"]*cfg["latent_dim"]+1, 256), nn.GELU())
+        self.input = nn.Sequential(nn.Linear(cfg["latent_dim"]+1, 256), nn.GELU())
         self.hidden1 = nn.Sequential(nn.Linear(256, 256), nn.GELU())
         self.hidden2 = nn.Sequential(nn.Linear(256, 256), nn.GELU())
         self.hidden3 = nn.Sequential(nn.Linear(256, 256), nn.GELU())
@@ -18,11 +18,11 @@ class Critic(nn.Module):
     def forward(self, s, a):
         ''' ### Forward pass of Critic
         Args:
-            s (torch.Tensor): State tensor of shape (batch_dim, asset_dim, num_latents*latent_dim)
+            s (torch.Tensor): State tensor of shape (batch_dim, asset_dim, latent_dim)
             a (torch.Tensor): Action tensor of shape (batch_dim, asset_dim, 1)
         Returns:
             mu (torch.Tensor): Q-value tensor of shape (batch_dim, asset_dim, 1)
-            log_std (torch.Tensor): Standard deviation tensor of shape (batch_dim, asset_dim, 1)
+            log_std (torch.Tensor): Standard deviation tensor of shape (batch_dim, asset_dim)
         '''
         x = torch.cat([s, a], dim=-1)
         x = self.input(x)

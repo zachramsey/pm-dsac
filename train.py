@@ -8,6 +8,7 @@ from agent.dsac import DSAC
 
 from utils.buffer import ReplayBuffer
 from utils.visualize import plot_update_info, animate_portfolio
+from utils.metrics import Metrics
 
 class TrainOffPolicy:
     def __init__(self, cfg):
@@ -15,7 +16,7 @@ class TrainOffPolicy:
 
         data = StockDataLoader(cfg)
         self.train_dl = data.get_train_data()
-        self.eval_dl = data.get_test_data()
+        self.eval_dl = data.get_eval_data()
 
         self.train_dates = self.train_dl.dataset.dates
         self.eval_dates = self.eval_dl.dataset.dates
@@ -27,6 +28,8 @@ class TrainOffPolicy:
         self.s = None
         self.weights = np.zeros((self.cfg["train_len"], self.cfg["asset_dim"]))
         self.values = np.zeros(self.cfg["train_len"])
+
+        self.metrics = Metrics(self.cfg)
 
     def train(self):
         for epoch in range(self.cfg["epochs"]):
@@ -51,7 +54,7 @@ class TrainOffPolicy:
                     continue
 
                 a = self.agent.act(self.s)
-                r, s_ = self.env.step(a, feat, targ)
+                r, s_, _ = self.env.step(a, feat, targ)
 
                 if step >= self.cfg["window_size"] - 1:
                     self.buffer.add(epoch, step, a, r)
@@ -61,7 +64,7 @@ class TrainOffPolicy:
                 self.values[step] = self.env.value
 
                 if step % self.cfg["interact_print_freq"] == 0 or step == len(self.train_dl) - 1:
-                    # sys.stdout.write("\033[F\033[K")
+                    sys.stdout.write("\033[F\033[K")
                     print(f"Interact | Step: {step} | Date: {self.train_dates[step].date()} | Value: {self.env.value:.2f}")
 
 
@@ -73,16 +76,16 @@ class TrainOffPolicy:
             
             if step % self.cfg["update_print_freq"] == 0 or step == self.cfg["update_steps"] - 1:
                 sys.stdout.write("\033[F\033[K")
-                print(f"  Update | Step: {step+1} | Actor Loss: {sum(self.agent.update_info["actor_loss"][-step:]):.6f} | Critic Loss: {sum(self.agent.update_info["critic_loss"][-step:]):.6f}")
+                print(f"  Update | Step: {step+1} | Actor Loss: {self.agent.update_info["actor_loss"][-1]:.6f} | Critic Loss: {self.agent.update_info["critic_loss"][-1]:.6f}")
         self.agent.log_info(self.cfg["log_dir"] + "latest.log")
 
 
     def _evaluate(self, epoch):
         with torch.no_grad():
             self.agent.embedding.eval()
+
             if epoch % self.cfg["eval_freq"] == 0:
                 print()
-                total_reward = 0
                 for step, (feat, targ) in enumerate(self.eval_dl):
                     feat = feat.squeeze(0)
 
@@ -91,12 +94,12 @@ class TrainOffPolicy:
                         continue
 
                     a = self.agent.act(self.s, is_deterministic=True)
-                    r, s_ = self.env.step(a, feat, targ)
+                    r, s_, ret = self.env.step(a, feat, targ)
 
-                    total_reward += r
                     self.s = s_
 
                     if step % self.cfg["eval_print_freq"] == 0 or step == len(self.eval_dl) - 1:
                         sys.stdout.write("\033[F\033[K")
-                        print(f"Evaluate | Step: {step} | Date: {self.eval_dates[step].date()} | Value: {self.env.value:.2f} | Reward: {total_reward:.10f}")
+                        print(f"Evaluate | Step: {step} | Date: {self.eval_dates[step].date()} | Value: {self.env.value:.2f}")
+                self.metrics.write(epoch, step, ret, a, self.env.value)
             self.agent.embedding.train()

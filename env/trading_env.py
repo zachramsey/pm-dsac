@@ -8,6 +8,8 @@ class TradingEnv:
         self.c_sell = cfg["sell_cost"]
         self.c_buy = cfg["purchase_cost"]
 
+        self.num_invested = cfg["num_invested"]
+
         self.value = self.init_cash         # Initialize the portfolio value
         self.weights = ActionBuffer(cfg)    # Buffer for storing the weights
 
@@ -73,6 +75,19 @@ class TradingEnv:
         """
         action = action.flatten()
         rel_prices = rel_prices.flatten()
+        action = action + torch.min(action)
+
+        # Keep top k weights and set the rest to zero
+        min_topk = torch.topk(action, self.num_invested).values[-1]
+        action = torch.where(action >= min_topk, action, torch.tensor(0.0, device=action.device))
+
+        # # Set all weights below 0.5 to zero
+        # action = torch.where(action >= 0.5, action, torch.tensor(0.0, device=action.device))
+
+        # action = torch.clamp(action, 0.0)   # Clip the weights to be non-negative
+
+        # Normalize the weights
+        action = action / torch.sum(action)
         
         # Get the portfolio weights before the action
         w = self.weights.get_last()
@@ -84,7 +99,8 @@ class TradingEnv:
         value = self.value * torch.dot(w, rel_prices)
 
         # Calculate the reward for the current day
-        reward = torch.log(value / self.value) * 100
+        reward = torch.log(value / self.value)
+        returns = value / self.value
 
         # Update the portfolio value
         self.value = value
@@ -100,7 +116,7 @@ class TradingEnv:
         self.env_info["value"].append(value)
         self.env_info["reward"].append(reward)
 
-        return reward, features
+        return reward, features, returns
     
         # pv_after_commission = calculate_pv_after_commission(omega, self._last_omega, self._commission_rate)
         # delta_value = pv_after_commission * np.dot(omega, future_price)

@@ -1,4 +1,5 @@
 import os
+import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 
@@ -10,41 +11,28 @@ def plot_update_info(epoch, update_info, cfg):
     if not os.path.exists(plot_dir):
         os.makedirs(plot_dir)
 
-    step, q1, q2, q1_std, q2_std, q1_mean_std, q2_mean_std, \
+    step = np.arange(len(update_info["q1"]))
+
+    e, q1, q2, q1_std, q2_std, q1_mean_std, q2_mean_std, \
     q1_loss, q2_loss, critic_loss, actor_loss, entropy, alpha = update_info.values()
     
-    plt.figure(figsize=(20, 20))
+    plt.figure(figsize=(8, 10))
 
-    plt.subplot(2, 2, 1)
-    plt.plot(step, q1, label="Q1")
-    plt.fill_between(step, lo(q1, q1_std), hi(q1, q1_std), alpha=0.2)
-    plt.plot(step, q2, label="Q2")
-    plt.fill_between(step, lo(q2, q2_std), hi(q2, q2_std), alpha=0.2)
+    q = np.where(q1 <= q2, q1, q2)
+    std = np.where(q1 <= q2, q1_std, q2_std)
+    plt.subplot(2, 1, 1)
+    plt.plot(step, q)
+    plt.fill_between(step, lo(q, std), hi(q, std), alpha=0.2)
     plt.xlabel("Step")
-    plt.ylabel("Q Value")
-    plt.legend()
+    plt.ylabel("Q")
+    plt.title("Minimum Q Value and Standard Deviation")
 
-    plt.subplot(2, 2, 2)
-    plt.plot(step, q1_mean_std, label="Q1 Mean Std")
-    plt.plot(step, q2_mean_std, label="Q2 Mean Std")
-    plt.xlabel("Step")
-    plt.ylabel("Q Mean Std")
-    plt.legend()
-
-    plt.subplot(2, 2, 3)
-    plt.plot(step, q1_loss, label="Q1 Loss")
-    plt.plot(step, q2_loss, label="Q2 Loss")
+    plt.subplot(2, 1, 2)
+    plt.plot(step, actor_loss, label="Actor Loss")
     plt.plot(step, critic_loss, label="Critic Loss")
     plt.xlabel("Step")
-    plt.ylabel("Critic Loss")
-    plt.legend()
-                
-    plt.subplot(2, 2, 4)
-    plt.plot(step, actor_loss, label="Actor Loss")
-    plt.plot(step, entropy, label="Entropy")
-    plt.plot(step, alpha, label="Alpha")
-    plt.xlabel("Step")
-    plt.ylabel("Actor Loss")
+    plt.ylabel("Loss")
+    plt.title("Actor and Critic Loss")
     plt.legend()
 
     plt.savefig(f"{plot_dir}epoch_{epoch}.png")

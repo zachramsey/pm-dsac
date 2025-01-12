@@ -17,7 +17,7 @@ class StockDataset(Dataset):
         self.window_size = window_size
     
     def __len__(self):
-        return len(self.dates) - self.window_size + 1
+        return len(self.dates) - (self.window_size + 1)
     
     def __getitem__(self, idx):
         # Get the target
@@ -47,7 +47,7 @@ class StockDataLoader:
         self.targets = None         # Targets for each stock symbol
 
         self.train_dataloader = None
-        self.test_dataloader = None
+        self.eval_dataloader = None
 
         # Retrieve the data
         if cfg["debug"] and os.path.exists(cfg["pickle_dir"]):
@@ -60,8 +60,8 @@ class StockDataLoader:
     def get_train_data(self):
         return self.train_dataloader
     
-    def get_test_data(self):
-        return self.test_dataloader
+    def get_eval_data(self):
+        return self.eval_dataloader
             
     def load_data(self):
         '''Load local pickled data'''
@@ -147,7 +147,8 @@ class StockDataLoader:
 
         # Fill prototype tensors with data
         for i, (symbol, df) in enumerate(self.data):
-            price_relative = (df['Close'].to_numpy() / df['Close'].shift(1).to_numpy())-1
+            print(df['Close'].to_numpy() / df['Close'].shift(1).to_numpy())
+            price_relative = (df['Close'].to_numpy() / df['Close'].shift(1).to_numpy())
             self.targets[i] = torch.from_numpy(price_relative[1:])
             self.features[i] = torch.from_numpy(df.to_numpy()[1:])
 
@@ -167,19 +168,19 @@ class StockDataLoader:
         train_features = self.features[:, :start_eval]
         train_targets = self.targets[:, :start_eval]
 
-        test_dates = self.dates[start_eval:]
-        test_features = self.features[:, start_eval:]
-        test_targets = self.targets[:, start_eval:]
+        eval_dates = self.dates[start_eval:]
+        eval_features = self.features[:, start_eval:]
+        eval_targets = self.targets[:, start_eval:]
 
         # Create the data loaders
         train_dataset = StockDataset(train_dates, train_features, train_targets, self.cfg["window_size"])
         self.train_dataloader = DataLoader(train_dataset, batch_size=1, shuffle=False)
-        test_dataset = StockDataset(test_dates, test_features, test_targets, self.cfg["window_size"])
-        self.test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False)
+        eval_dataset = StockDataset(eval_dates, eval_features, eval_targets, self.cfg["window_size"])
+        self.eval_dataloader = DataLoader(eval_dataset, batch_size=1, shuffle=False)
 
         # Save values to the config
         self.cfg["symbols"] = self.symbols.data
         self.cfg["train_len"] = len(train_dataset)
-        self.cfg["test_len"] = len(test_dataset)
+        self.cfg["eval_len"] = len(eval_dataset)
         self.cfg["asset_dim"] = self.features.size(0)
         self.cfg["feat_dim"] = self.features.size(2)

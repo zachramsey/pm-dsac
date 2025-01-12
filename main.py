@@ -14,7 +14,7 @@ if __name__ == "__main__":
         f.write("")
 
     try:
-        # Off-Policy Training
+        # Off-Policy Trainingactor_loss = torch.mean(torch.exp(self.log_alpha) * log_prob_new - q_min + std_min)
         trader = TrainOffPolicy(cfg)
         trader.train()
     except KeyboardInterrupt:

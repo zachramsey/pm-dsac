@@ -18,6 +18,7 @@ from utils.distributions import TanhGaussDistribution
 
 class DSAC:
     def __init__(self, cfg):
+        self.batch_size = cfg["batch_size"]         # Batch size
         self.asset_dim = cfg["asset_dim"]           # Number of assets
 
         self.gamma = cfg["gamma"]                   # Discount factor
@@ -63,7 +64,7 @@ class DSAC:
 
         # Collect training information
         self.update_info = {
-            "step": [],
+            "epoch": [],
             "q1": [],
             "q2": [],
             "q1_std": [],
@@ -79,12 +80,14 @@ class DSAC:
         }
 
 
-    def act(self, s, is_deterministic=False):
-        h = self.embedding(s)
-        act, std = self.actor(h)
-        act_dist = TanhGaussDistribution(act, std)
-        act = act_dist.mode() if is_deterministic else act_dist.sample()[0]
-        act = torch.softmax(act, dim=0)
+    def act(self, s, is_random=False, is_deterministic=False):
+        if is_random:
+            act = torch.randn(self.asset_dim, 1)
+        else:
+            h = self.embedding(s)
+            act, std = self.actor(h)
+            act_dist = TanhGaussDistribution(act, std)
+            act = act_dist.mode() if is_deterministic else act_dist.sample()[0]
         return act.detach()
     
 
@@ -102,8 +105,8 @@ class DSAC:
 
         # Get action for next state from target policy
         logits_next_mean, logits_next_std = self.actor_target(s_next)
-        a_next, log_prob_a_next = TanhGaussDistribution(logits_next_mean, logits_next_std).rsample()
-        a_next = torch.softmax(a_next, dim=0)
+        act_dist = TanhGaussDistribution(logits_next_mean, logits_next_std)
+        a_next, log_prob_a_next = act_dist.rsample()
 
         # Determine minimum Q-value function
         q1_next, q1_next_std = self.critic1_target(s_next, a_next)
@@ -147,37 +150,37 @@ class DSAC:
     
 
     def _actor_objective(self, s, act_new, log_prob_new):
-        q1, _ = self.critic1(s, act_new)
-        q2, _ = self.critic2(s, act_new)
-        actor_loss = torch.mean(torch.exp(self.log_alpha) * log_prob_new - torch.min(q1, q2))
+        q1, std1 = self.critic1(s, act_new)
+        q2, std2 = self.critic2(s, act_new)
+        q_min = torch.min(q1, q2)
+        std_min = torch.where(q1 < q2, std1, std2)
+        actor_loss = torch.mean(torch.exp(self.log_alpha) * log_prob_new - q_min + std_min)
         entropy = -torch.mean(log_prob_new.detach())
         return actor_loss, entropy
 
 
-    def _temperature_objective(self, log_prob_new):
-        return -self.log_alpha * torch.mean(log_prob_new.detach() + self.target_entropy)
-
-
-    def update(self, iteration, s, a, r, s_next):
+    def update(self, epoch, s, a, r, s_next):
         # Embed state into latent space
-        self.embedding_opt.zero_grad()
         h = self.embedding(s)
         h_next = self.embedding(s_next)
         
         # Get action for current state
         logits_mean, logits_std = self.actor(h)
-        policy_mean = torch.mean(torch.tanh(logits_mean)).item()
-        policy_std = torch.mean(logits_std).item()
-        act_new, log_prob_new = TanhGaussDistribution(policy_mean, policy_std).rsample()
-        act_new = torch.softmax(act_new, dim=1)
+        policy_mean = torch.mean(torch.tanh(logits_mean), dim=0, keepdim=True)
+        policy_std = torch.mean(logits_std, dim=0, keepdim=True)
+        act_dist = TanhGaussDistribution(policy_mean, policy_std)
+        act_new, log_prob_new = act_dist.rsample()
+        act_new = act_new.expand(self.batch_size, -1, -1)
 
         # Update Critic
+        self.embedding_opt.zero_grad()
         self.critic1_opt.zero_grad()#set_to_none=True)
         self.critic2_opt.zero_grad()
-        q_loss, q1_loss, q2_loss, q1, q2, q1_std, q2_std = self._critic_objective(h, a, r, h_next)
-        q_loss.backward(retain_graph=True)
+        critic_loss, q1_loss, q2_loss, q1, q2, q1_std, q2_std = self._critic_objective(h, a, r, h_next)
+        critic_loss.backward(retain_graph=True)
 
-        # Don't consider critic when updating actor
+        # Freeze networks
+        for p in self.embedding.parameters(): p.requires_grad = False
         for p in self.critic1.parameters(): p.requires_grad = False
         for p in self.critic2.parameters(): p.requires_grad = False
 
@@ -186,24 +189,27 @@ class DSAC:
         actor_loss, entropy = self._actor_objective(h, act_new, log_prob_new)
         actor_loss.backward()
 
-        # Re-enable critic
+        # Unfreeze networks
+        for p in self.embedding.parameters(): p.requires_grad = True
         for p in self.critic1.parameters(): p.requires_grad = True
         for p in self.critic2.parameters(): p.requires_grad = True
 
         # Update temperature
         self.alpha_opt.zero_grad()
-        temperature_loss = self._temperature_objective(log_prob_new)
+        temperature_loss = -self.log_alpha * torch.mean(log_prob_new.detach() + self.target_entropy)
         temperature_loss.backward()
 
         # Optimize critic networks
-        self.embedding_opt.step()
         self.critic1_opt.step()
         self.critic2_opt.step()
 
+        # Optimize embedding network
+        self.embedding_opt.step()
+
         # Delayed update
-        if iteration % self.delay_update == 0:
-            self.actor_opt.step()       # Optimize actor network
-            self.alpha_opt.step() # Optimize temperature network
+        if epoch % self.delay_update == 0:
+            self.actor_opt.step()   # Optimize actor network
+            self.alpha_opt.step()   # Optimize temperature network
 
             # Perform soft update on target networks
             with torch.no_grad():
@@ -222,7 +228,7 @@ class DSAC:
                     p_targ.data.add_((1 - polyak) * p.data)
 
         # Collect training information
-        self.update_info["step"].append(iteration)
+        self.update_info["epoch"].append(epoch)
         self.update_info["q1"].append(q1.item())
         self.update_info["q2"].append(q2.item())
         self.update_info["q1_std"].append(q1_std.item())
@@ -231,7 +237,7 @@ class DSAC:
         self.update_info["q2_mean_std"].append(torch.sqrt(self.q2_grad_scalar).item())
         self.update_info["q1_loss"].append(q1_loss.item())
         self.update_info["q2_loss"].append(q2_loss.item())
-        self.update_info["critic_loss"].append(q_loss.item())
+        self.update_info["critic_loss"].append(critic_loss.item())
         self.update_info["actor_loss"].append(actor_loss.item())
         self.update_info["entropy"].append(entropy.item())
         self.update_info["alpha"].append(torch.exp(self.log_alpha).item())
@@ -246,9 +252,10 @@ class DSAC:
         with open(log_file, "a") as f:
             f.write("="*50 + "\n")
             for key, value in self.update_info.items():
-                if key == "step":
-                    f.write(f"Training Step: {value[-1]}\n")
+                if key == "epoch":
+                    f.write(f"Epoch {value[-1]}\n")
                     f.write("-"*50 + "\n")
+                    f.write("Training Step:\n")
                 else:
                     f.write(f"{key}: {value[-1]}\n")
-            f.write("-"*50 + "\n\n")
+            f.write("-"*50 + "\n")
